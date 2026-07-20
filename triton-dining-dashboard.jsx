@@ -470,7 +470,15 @@ export default function TritonDiningDashboard() {
                       {l}
                     </button>
                   ))}
-                  <button onClick={exportCsv}>
+                  <button 
+                    onClick={exportCsv}
+                    className="px-3 py-1"
+                    style={{
+                      fontFamily: MONO, fontSize: 11, cursor: "pointer", borderRadius: 3,
+                      border:"none",
+                      background: C.gold,
+                      color: C.navy,
+                    }}>
                     Export CSV
                   </button>
                 </div>
