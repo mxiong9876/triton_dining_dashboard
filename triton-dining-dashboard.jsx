@@ -205,19 +205,18 @@ export default function TritonDiningDashboard() {
 
   /* load persisted data */
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY);
-        if (res && res.value) setReceipts(JSON.parse(res.value));
-      } catch { /* first run — nothing stored yet */ }
-      setLoaded(true);
-    })();
+    // localStorage is synchronous, so no async/await needed here.
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setReceipts(JSON.parse(raw));
+    } catch { /* first run — nothing stored yet */ }
+    setLoaded(true);
   }, []);
 
   const persist = useCallback(async (next) => {
     setReceipts(next);
     try {
-      await window.storage.set(STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch (e) {
       setLog((l) => [{ ok: false, msg: "Saved in this session only — storage write failed." }, ...l]);
     }
@@ -235,7 +234,7 @@ export default function TritonDiningDashboard() {
         fresh.push({ ...r, id: k, items: Array.isArray(r.items) ? r.items : [] });
       }
       const next = [...current, ...fresh].sort((a, b) => (a.date < b.date ? 1 : -1));
-      window.storage.set(STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       setLog((l) => [{ ok: true, msg: `Added ${fresh.length} new receipt${fresh.length === 1 ? "" : "s"} (${incoming.length - fresh.length} duplicate/skipped).` }, ...l]);
       return next;
     });
