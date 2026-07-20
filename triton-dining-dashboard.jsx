@@ -293,6 +293,20 @@ export default function TritonDiningDashboard() {
     setLog([]);
   }
 
+  function exportCsv() {
+    const data = filtered
+    const header = ["date", "time", "location", "items", "cost"]
+    const csv = [header.join(","),...data.map((r) => [r.date, r.time, r.location, r.items.map((it) => it.name).join(";"), r.total])];
+    const text = csv.join("\n")
+    const blob = new Blob([text], {type: "text/csv"})
+    const url = URL.createObjectURL(blob)
+    const el = document.createElement("a")
+    el.href = url;
+    el.download = "receipts.csv";
+    el.click();
+    URL.revokeObjectURL(url)
+  }
+
   /* filtered view */
   const filtered = useMemo(() => {
     if (range === "all") return receipts;
@@ -442,7 +456,7 @@ export default function TritonDiningDashboard() {
               {/* range filter */}
               <div className="flex justify-end mb-4">
                 <div className="flex gap-1">
-                  {[["all", "All time"], ["90", "90 days"], ["30", "30 days"]].map(([v, l]) => (
+                  {[["all", "All time"], ["90", "90 days"], ["30", "30 days"], ["7", "7 days"]].map(([v, l]) => (
                     <button
                       key={v}
                       onClick={() => setRange(v)}
@@ -457,6 +471,9 @@ export default function TritonDiningDashboard() {
                       {l}
                     </button>
                   ))}
+                  <button onClick={exportCsv}>
+                    Export CSV
+                  </button>
                 </div>
               </div>
 
