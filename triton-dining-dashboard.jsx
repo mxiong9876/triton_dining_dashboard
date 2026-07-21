@@ -202,6 +202,9 @@ export default function TritonDiningDashboard() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const fileRef = useRef(null);
+  const exportRef = useRef(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   /* load persisted data */
   useEffect(() => {
@@ -292,19 +295,64 @@ export default function TritonDiningDashboard() {
     setLog([]);
   }
 
-  function exportCsv() {
-    const data = filtered
-    const header = ["date", "time", "location", "items", "cost"]
-    const csv = [header.join(","),...data.map((r) => [r.date, r.time, r.location, r.items.map((it) => it.name).join(";"), r.total])];
-    const text = csv.join("\n")
-    const blob = new Blob([text], {type: "text/csv"})
-    const url = URL.createObjectURL(blob)
-    const el = document.createElement("a")
-    el.href = url;
-    el.download = "receipts.csv";
-    el.click();
-    URL.revokeObjectURL(url)
+  /* ---- export helpers ---- */
+  function receiptsToCsv(data) {
+    const header = ["date", "time", "location", "items", "cost"];
+    const rows = data.map((r) =>
+      [
+        r.date,
+        r.time,
+        r.location,
+        (r.items || []).map((it) => it.name).join(";"),
+        r.total,
+      ].join(",")
+    );
+    return [header.join(","), ...rows].join("\n");
   }
+
+  // Build an <a> in code and click it to trigger a browser download.
+  function downloadFile(filename, text, type) {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement("a");
+    el.href = url;
+    el.download = filename;
+    el.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCsv() {
+    downloadFile("receipts.csv", receiptsToCsv(filtered), "text/csv");
+    setExportOpen(false);
+  }
+
+  function exportJson() {
+    downloadFile("receipts.json", JSON.stringify(filtered, null, 2), "application/json");
+    setExportOpen(false);
+  }
+
+  async function copyJson() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(filtered, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      setLog((l) => [{ ok: false, msg: "Copy failed: " + e.message }, ...l]);
+    }
+    setExportOpen(false);
+  }
+
+  /* close the export menu when clicking anywhere outside it */
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onDocClick(e) {
+      if (exportRef.current && !exportRef.current.contains(e.target)) {
+        setExportOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [exportOpen]);
 
   /* filtered view */
   const filtered = useMemo(() => {
@@ -470,17 +518,50 @@ export default function TritonDiningDashboard() {
                       {l}
                     </button>
                   ))}
-                  <button 
-                    onClick={exportCsv}
-                    className="px-3 py-1"
-                    style={{
-                      fontFamily: MONO, fontSize: 11, cursor: "pointer", borderRadius: 3,
-                      border:"none",
-                      background: C.gold,
-                      color: C.navy,
-                    }}>
-                    Export CSV
-                  </button>
+                  <div ref={exportRef} style={{ position: "relative" }}>
+                    <button
+                      onClick={() => setExportOpen((o) => !o)}
+                      className="px-3 py-1"
+                      style={{
+                        fontFamily: MONO, fontSize: 11, cursor: "pointer", borderRadius: 3,
+                        border: "none",
+                        background: C.gold,
+                        color: C.navy,
+                      }}
+                    >
+                      {copied ? "✓ Copied" : "Export ▾"}
+                    </button>
+                    {exportOpen && (
+                      <div
+                        style={{
+                          position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20,
+                          background: "#FFF", border: `1px solid ${C.line}`, borderRadius: 3,
+                          boxShadow: "0 4px 14px rgba(22,36,61,0.15)", minWidth: 150, overflow: "hidden",
+                        }}
+                      >
+                        {[
+                          ["Download CSV", exportCsv],
+                          ["Download JSON", exportJson],
+                          ["Copy JSON", copyJson],
+                        ].map(([label, action], i) => (
+                          <button
+                            key={label}
+                            onClick={action}
+                            style={{
+                              display: "block", width: "100%", textAlign: "left",
+                              fontFamily: MONO, fontSize: 11, cursor: "pointer",
+                              padding: "8px 12px",
+                              background: "#FFF", color: C.navy,
+                              border: "none",
+                              borderTop: i === 0 ? "none" : `1px solid ${C.line}`,
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
