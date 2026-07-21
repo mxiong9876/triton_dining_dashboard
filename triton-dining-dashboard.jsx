@@ -147,14 +147,14 @@ function StatStub({ label, value, sub }) {
     <div className="flex-1 min-w-0" style={{ minWidth: 150 }}>
       <div style={{ background: C.paper, boxShadow: "0 2px 10px rgba(22,36,61,0.12)" }}>
         <div className="px-4 pt-4 pb-3">
-          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", color: C.inkFaint, textTransform: "uppercase" }}>
+          <div style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.14em", color: C.inkFaint, textTransform: "uppercase" }}>
             {label}
           </div>
-          <div style={{ fontFamily: SANS, fontWeight: 800, fontSize: 26, color: C.navy, lineHeight: 1.2, marginTop: 2 }} className="truncate">
+          <div style={{ fontFamily: SANS, fontWeight: 800, fontSize: 28, color: C.navy, lineHeight: 1.2, marginTop: 2 }} className="truncate">
             {value}
           </div>
           {sub && (
-            <div style={{ fontFamily: MONO, fontSize: 11, color: C.inkFaint, marginTop: 2 }} className="truncate">
+            <div style={{ fontFamily: MONO, fontSize: 13, color: C.inkFaint, marginTop: 2 }} className="truncate">
               {sub}
             </div>
           )}
@@ -169,7 +169,7 @@ function Panel({ title, children, right }) {
   return (
     <div style={{ background: "#FFFFFF", border: `1px solid ${C.line}`, borderRadius: 4 }} className="p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.navySoft, fontWeight: 600 }}>
+        <h3 style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.14em", textTransform: "uppercase", color: C.navySoft, fontWeight: 600 }}>
           {title}
         </h3>
         {right}
@@ -182,7 +182,7 @@ function Panel({ title, children, right }) {
 function ChartTip({ active, payload, label, money }) {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div style={{ background: C.navy, color: C.paper, fontFamily: MONO, fontSize: 11, padding: "6px 10px", borderRadius: 3 }}>
+    <div style={{ background: C.navy, color: C.paper, fontFamily: MONO, fontSize: 13, padding: "6px 10px", borderRadius: 3 }}>
       <div style={{ opacity: 0.7 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i}>{p.name}: {money ? fmt$(p.value) : p.value}</div>
@@ -437,21 +437,21 @@ export default function TritonDiningDashboard() {
 
       {/* header */}
       <header style={{ background: C.navy, color: C.paper }}>
-        <div className="max-w-5xl mx-auto px-4 py-5 flex items-end justify-between gap-4 flex-wrap">
+        <div className="w-4/5 mx-auto py-5 flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.2em", color: C.gold }}>
+            <div style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.2em", color: C.gold }}>
               ★ TRITON2GO · PERSONAL LEDGER ★
             </div>
-            <h1 style={{ fontFamily: SANS, fontWeight: 800, fontSize: 28, letterSpacing: "-0.01em" }}>
+            <h1 style={{ fontFamily: SANS, fontWeight: 800, fontSize: 30, letterSpacing: "-0.01em" }}>
               Dining Habits
             </h1>
           </div>
-          <div style={{ fontFamily: MONO, fontSize: 11, opacity: 0.75 }}>
+          <div style={{ fontFamily: MONO, fontSize: 13, opacity: 0.75 }}>
             {loaded ? `${receipts.length} receipts on file` : "loading…"}
           </div>
         </div>
         {/* tabs */}
-        <div className="max-w-5xl mx-auto px-4 flex gap-1" role="tablist">
+        <div className="w-4/5 mx-auto flex gap-1" role="tablist">
           {[["dashboard", "Dashboard"], ["import", "Import"], ["receipts", "Receipts"]].map(([id, label]) => (
             <button
               key={id}
@@ -460,7 +460,7 @@ export default function TritonDiningDashboard() {
               onClick={() => setTab(id)}
               className="px-4 py-2"
               style={{
-                fontFamily: MONO, fontSize: 12, letterSpacing: "0.08em",
+                fontFamily: MONO, fontSize: 14, letterSpacing: "0.08em",
                 background: tab === id ? C.paperEdge : "transparent",
                 color: tab === id ? C.navy : C.paper,
                 border: "none", cursor: "pointer",
@@ -474,26 +474,26 @@ export default function TritonDiningDashboard() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main className="w-4/5 mx-auto py-6">
         {busy && (
-          <div className="flex items-center gap-2 mb-4 p-3" style={{ background: C.navy, color: C.paper, borderRadius: 4, fontFamily: MONO, fontSize: 12 }}>
+          <div className="flex items-center gap-2 mb-4 p-3" style={{ background: C.navy, color: C.paper, borderRadius: 4, fontFamily: MONO, fontSize: 14 }}>
             <Loader2 size={14} className="animate-spin" /> {busy}
           </div>
         )}
 
         {/* ------- DASHBOARD ------- */}
         {tab === "dashboard" && (
-          filtered.length === 0 ? (
+          receipts.length === 0 ? (
             <div className="text-center py-16">
               <Receipt size={36} style={{ color: C.inkFaint, margin: "0 auto 12px" }} />
-              <p style={{ fontFamily: SANS, fontWeight: 700, fontSize: 18 }}>No receipts yet</p>
-              <p style={{ color: C.inkFaint, fontSize: 14, marginTop: 4 }}>
+              <p style={{ fontFamily: SANS, fontWeight: 700, fontSize: 20 }}>No receipts yet</p>
+              <p style={{ color: C.inkFaint, fontSize: 16, marginTop: 4 }}>
                 Head to the Import tab — upload receipt screenshots from the Triton2Go app to get started.
               </p>
               <button
                 onClick={() => setTab("import")}
                 className="mt-4 px-5 py-2"
-                style={{ background: C.gold, color: C.navy, fontFamily: MONO, fontSize: 12, fontWeight: 600, border: "none", borderRadius: 3, cursor: "pointer", letterSpacing: "0.08em" }}
+                style={{ background: C.gold, color: C.navy, fontFamily: MONO, fontSize: 14, fontWeight: 600, border: "none", borderRadius: 3, cursor: "pointer", letterSpacing: "0.08em" }}
               >
                 IMPORT RECEIPTS
               </button>
@@ -509,7 +509,7 @@ export default function TritonDiningDashboard() {
                       onClick={() => setRange(v)}
                       className="px-3 py-1"
                       style={{
-                        fontFamily: MONO, fontSize: 11, cursor: "pointer", borderRadius: 3,
+                        fontFamily: MONO, fontSize: 13, cursor: "pointer", borderRadius: 3,
                         border: `1px solid ${range === v ? C.navy : C.line}`,
                         background: range === v ? C.navy : "#FFF",
                         color: range === v ? C.paper : C.navySoft,
@@ -523,7 +523,7 @@ export default function TritonDiningDashboard() {
                       onClick={() => setExportOpen((o) => !o)}
                       className="px-3 py-1"
                       style={{
-                        fontFamily: MONO, fontSize: 11, cursor: "pointer", borderRadius: 3,
+                        fontFamily: MONO, fontSize: 13, cursor: "pointer", borderRadius: 3,
                         border: "none",
                         background: C.gold,
                         color: C.navy,
@@ -549,7 +549,7 @@ export default function TritonDiningDashboard() {
                             onClick={action}
                             style={{
                               display: "block", width: "100%", textAlign: "left",
-                              fontFamily: MONO, fontSize: 11, cursor: "pointer",
+                              fontFamily: MONO, fontSize: 13, cursor: "pointer",
                               padding: "8px 12px",
                               background: "#FFF", color: C.navy,
                               border: "none",
@@ -565,6 +565,16 @@ export default function TritonDiningDashboard() {
                 </div>
               </div>
 
+              {filtered.length === 0 ? (
+                <div className="text-center py-16">
+                  <Receipt size={32} style={{ color: C.inkFaint, margin: "0 auto 10px" }} />
+                  <p style={{ fontFamily: SANS, fontWeight: 700, fontSize: 18 }}>No orders in this time range</p>
+                  <p style={{ color: C.inkFaint, fontSize: 15, marginTop: 4 }}>
+                    Nothing here for the selected window — pick a wider range above, or switch back to All time.
+                  </p>
+                </div>
+              ) : (
+                <>
               {/* stat stubs */}
               <div className="flex gap-3 flex-wrap mb-6">
                 <StatStub label="Total spent" value={fmt$(stats.total)} sub={`${stats.count} orders`} />
@@ -581,14 +591,14 @@ export default function TritonDiningDashboard() {
                 />
               </div>
 
-              <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+              <div className="grid gap-6" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                 {/* spend over time */}
                 <Panel title="Spend by month">
-                  <ResponsiveContainer width="100%" height={200}>
+                  <ResponsiveContainer width="100%" height={260}>
                     <AreaChart data={stats.months} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
                       <CartesianGrid stroke={C.line} strokeDasharray="2 4" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontFamily: MONO, fontSize: 10, fill: C.inkFaint }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontFamily: MONO, fontSize: 10, fill: C.inkFaint }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="label" tick={{ fontFamily: MONO, fontSize: 12, fill: C.inkFaint }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontFamily: MONO, fontSize: 12, fill: C.inkFaint }} axisLine={false} tickLine={false} />
                       <Tooltip content={<ChartTip money />} />
                       <Area type="monotone" dataKey="spend" name="Spend" stroke={C.sea} strokeWidth={2} fill={C.sea} fillOpacity={0.15} />
                     </AreaChart>
@@ -597,10 +607,10 @@ export default function TritonDiningDashboard() {
 
                 {/* by location */}
                 <Panel title="Where the money goes">
-                  <ResponsiveContainer width="100%" height={200}>
+                  <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={stats.locations.slice(0, 6)} layout="vertical" margin={{ top: 0, right: 8, left: 8, bottom: 0 }}>
                       <XAxis type="number" hide />
-                      <YAxis type="category" dataKey="location" width={110} tick={{ fontFamily: MONO, fontSize: 10, fill: C.navySoft }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="location" width={110} tick={{ fontFamily: MONO, fontSize: 12, fill: C.navySoft }} axisLine={false} tickLine={false} />
                       <Tooltip content={<ChartTip money />} />
                       <Bar dataKey="spend" name="Spend" radius={[0, 3, 3, 0]}>
                         {stats.locations.slice(0, 6).map((_, i) => (
@@ -614,13 +624,13 @@ export default function TritonDiningDashboard() {
                 {/* top items — printed like a receipt */}
                 <Panel title="Most ordered items">
                   {stats.topItems.length === 0 ? (
-                    <p style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint }}>
+                    <p style={{ fontFamily: MONO, fontSize: 14, color: C.inkFaint }}>
                       No line items yet — screenshots of full receipts will fill this in.
                     </p>
                   ) : (
                     <div style={{ background: C.paper, padding: "12px 14px" }}>
                       {stats.topItems.map((it, i) => (
-                        <div key={it.name} className="flex justify-between gap-2 py-1" style={{ fontFamily: MONO, fontSize: 12, borderBottom: i < stats.topItems.length - 1 ? `1px dashed ${C.line}` : "none" }}>
+                        <div key={it.name} className="flex justify-between gap-2 py-1" style={{ fontFamily: MONO, fontSize: 14, borderBottom: i < stats.topItems.length - 1 ? `1px dashed ${C.line}` : "none" }}>
                           <span className="truncate">{it.name}</span>
                           <span style={{ whiteSpace: "nowrap", color: C.navySoft }}>×{it.count} · {fmt$(it.spend)}</span>
                         </div>
@@ -630,17 +640,18 @@ export default function TritonDiningDashboard() {
                   )}
                 </Panel>
 
-                {/* heatmap */}
+                {/* heatmap — spans the full second row */}
+                <div style={{ gridColumn: "1 / -1" }}>
                 <Panel title="When you eat">
                   <div className="overflow-x-auto">
                     <div style={{ display: "grid", gridTemplateColumns: `44px repeat(${MEAL_SLOTS.length}, 1fr)`, gap: 3, minWidth: 320 }}>
                       <div />
                       {MEAL_SLOTS.map((s) => (
-                        <div key={s.label} style={{ fontFamily: MONO, fontSize: 9, color: C.inkFaint, textAlign: "center" }}>{s.label}</div>
+                        <div key={s.label} style={{ fontFamily: MONO, fontSize: 11, color: C.inkFaint, textAlign: "center" }}>{s.label}</div>
                       ))}
                       {DAY_NAMES.map((day, di) => (
                         <React.Fragment key={day}>
-                          <div style={{ fontFamily: MONO, fontSize: 10, color: C.navySoft, alignSelf: "center" }}>{day}</div>
+                          <div style={{ fontFamily: MONO, fontSize: 12, color: C.navySoft, alignSelf: "center" }}>{day}</div>
                           {MEAL_SLOTS.map((_, si) => {
                             const v = stats.heat[di + "-" + si] || 0;
                             return (
@@ -648,7 +659,7 @@ export default function TritonDiningDashboard() {
                                 key={si}
                                 title={`${day} ${MEAL_SLOTS[si].label}: ${v} order${v === 1 ? "" : "s"}`}
                                 style={{
-                                  height: 26, borderRadius: 3,
+                                  height: 40, borderRadius: 3,
                                   background: v === 0 ? "#F1EFE7" : C.sea,
                                   opacity: v === 0 ? 1 : 0.25 + 0.75 * (v / stats.maxHeat),
                                 }}
@@ -659,11 +670,14 @@ export default function TritonDiningDashboard() {
                       ))}
                     </div>
                   </div>
-                  <p style={{ fontFamily: MONO, fontSize: 10, color: C.inkFaint, marginTop: 8 }}>
+                  <p style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint, marginTop: 8 }}>
                     Darker = more orders in that slot. Needs receipts with a time stamp.
                   </p>
                 </Panel>
+                </div>
               </div>
+                </>
+              )}
             </>
           )
         )}
@@ -672,7 +686,7 @@ export default function TritonDiningDashboard() {
         {tab === "import" && (
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
             <Panel title="App receipt screenshots">
-              <p style={{ fontSize: 13, color: C.navySoft, marginBottom: 12 }}>
+              <p style={{ fontSize: 15, color: C.navySoft, marginBottom: 12 }}>
                 In Triton2Go, open each receipt and screenshot it. Upload the images here — Claude reads out the items, prices, location and date automatically. Duplicates are skipped by receipt number.
               </p>
               <input ref={fileRef} type="file" accept="image/*" multiple onChange={(e) => handleFiles(e.target.files)} />
@@ -680,21 +694,21 @@ export default function TritonDiningDashboard() {
                 onClick={() => fileRef.current && fileRef.current.click()}
                 disabled={!!busy}
                 className="w-full py-3 flex items-center justify-center gap-2"
-                style={{ background: C.gold, color: C.navy, fontFamily: MONO, fontSize: 12, fontWeight: 600, border: "none", borderRadius: 3, cursor: busy ? "wait" : "pointer", letterSpacing: "0.08em", opacity: busy ? 0.6 : 1 }}
+                style={{ background: C.gold, color: C.navy, fontFamily: MONO, fontSize: 14, fontWeight: 600, border: "none", borderRadius: 3, cursor: busy ? "wait" : "pointer", letterSpacing: "0.08em", opacity: busy ? 0.6 : 1 }}
               >
                 <Upload size={14} /> UPLOAD SCREENSHOTS
               </button>
             </Panel>
 
             <Panel title="Market receipts from Gmail">
-              <p style={{ fontSize: 13, color: C.navySoft, marginBottom: 12 }}>
+              <p style={{ fontSize: 15, color: C.navySoft, marginBottom: 12 }}>
                 Walkout-market purchases send email receipts. This searches your connected Gmail for Transact / Just Walk Out receipts and pulls them in.
               </p>
               <button
                 onClick={handleGmail}
                 disabled={!!busy}
                 className="w-full py-3 flex items-center justify-center gap-2"
-                style={{ background: C.navy, color: C.paper, fontFamily: MONO, fontSize: 12, fontWeight: 600, border: "none", borderRadius: 3, cursor: busy ? "wait" : "pointer", letterSpacing: "0.08em", opacity: busy ? 0.6 : 1 }}
+                style={{ background: C.navy, color: C.paper, fontFamily: MONO, fontSize: 14, fontWeight: 600, border: "none", borderRadius: 3, cursor: busy ? "wait" : "pointer", letterSpacing: "0.08em", opacity: busy ? 0.6 : 1 }}
               >
                 <Mail size={14} /> SYNC FROM GMAIL
               </button>
@@ -708,9 +722,9 @@ export default function TritonDiningDashboard() {
                 </button>
               }
             >
-              <p style={{ fontSize: 13, color: C.navySoft, marginBottom: 12 }}>
+              <p style={{ fontSize: 15, color: C.navySoft, marginBottom: 12 }}>
                 Already have data from a scraper or export? Paste an array of receipts:{" "}
-                <code style={{ fontFamily: MONO, fontSize: 11 }}>{"[{location,date,time,total,receiptNumber,items:[{name,qty,price}]}]"}</code>
+                <code style={{ fontFamily: MONO, fontSize: 13 }}>{"[{location,date,time,total,receiptNumber,items:[{name,qty,price}]}]"}</code>
               </p>
               {pasteOpen && (
                 <>
@@ -719,13 +733,13 @@ export default function TritonDiningDashboard() {
                     onChange={(e) => setPasteText(e.target.value)}
                     rows={6}
                     className="w-full p-2 mb-2"
-                    style={{ fontFamily: MONO, fontSize: 11, border: `1px solid ${C.line}`, borderRadius: 3, resize: "vertical" }}
+                    style={{ fontFamily: MONO, fontSize: 13, border: `1px solid ${C.line}`, borderRadius: 3, resize: "vertical" }}
                     placeholder='[{"location":"64 Degrees","date":"2026-07-01","time":"18:42","total":12.5,"items":[{"name":"Poke Bowl","qty":1,"price":12.5}]}]'
                   />
                   <button
                     onClick={handlePaste}
                     className="px-4 py-2"
-                    style={{ background: C.sea, color: "#FFF", fontFamily: MONO, fontSize: 12, border: "none", borderRadius: 3, cursor: "pointer" }}
+                    style={{ background: C.sea, color: "#FFF", fontFamily: MONO, fontSize: 14, border: "none", borderRadius: 3, cursor: "pointer" }}
                   >
                     Add receipts
                   </button>
@@ -736,11 +750,11 @@ export default function TritonDiningDashboard() {
             {log.length > 0 && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <Panel title="Import log" right={
-                  <button onClick={() => setLog([])} style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint, fontFamily: MONO, fontSize: 11 }}>clear</button>
+                  <button onClick={() => setLog([])} style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint, fontFamily: MONO, fontSize: 13 }}>clear</button>
                 }>
                   <div className="space-y-1">
                     {log.slice(0, 8).map((e, i) => (
-                      <div key={i} className="flex items-start gap-2" style={{ fontFamily: MONO, fontSize: 11, color: e.ok ? C.navySoft : C.coral }}>
+                      <div key={i} className="flex items-start gap-2" style={{ fontFamily: MONO, fontSize: 13, color: e.ok ? C.navySoft : C.coral }}>
                         {e.ok ? <CheckCircle2 size={12} style={{ marginTop: 1, flexShrink: 0 }} /> : <AlertCircle size={12} style={{ marginTop: 1, flexShrink: 0 }} />}
                         {e.msg}
                       </div>
@@ -755,16 +769,16 @@ export default function TritonDiningDashboard() {
         {/* ------- RECEIPTS ------- */}
         {tab === "receipts" && (
           receipts.length === 0 ? (
-            <p style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint, textAlign: "center", padding: "48px 0" }}>
+            <p style={{ fontFamily: MONO, fontSize: 14, color: C.inkFaint, textAlign: "center", padding: "48px 0" }}>
               Nothing on file yet.
             </p>
           ) : (
             <>
               <div className="flex justify-between items-center mb-3">
-                <span style={{ fontFamily: MONO, fontSize: 11, color: C.inkFaint }}>{receipts.length} receipts · newest first</span>
+                <span style={{ fontFamily: MONO, fontSize: 13, color: C.inkFaint }}>{receipts.length} receipts · newest first</span>
                 <button
                   onClick={() => { if (window.confirm("Delete all stored receipts?")) clearAll(); }}
-                  style={{ background: "none", border: `1px solid ${C.coral}`, color: C.coral, fontFamily: MONO, fontSize: 11, padding: "4px 10px", borderRadius: 3, cursor: "pointer" }}
+                  style={{ background: "none", border: `1px solid ${C.coral}`, color: C.coral, fontFamily: MONO, fontSize: 13, padding: "4px 10px", borderRadius: 3, cursor: "pointer" }}
                 >
                   Clear all
                 </button>
@@ -775,10 +789,10 @@ export default function TritonDiningDashboard() {
                     <div style={{ background: C.paper, boxShadow: "0 2px 8px rgba(22,36,61,0.10)", padding: "14px 14px 8px" }}>
                       <div className="flex justify-between items-start gap-2">
                         <div>
-                          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 14 }} className="flex items-center gap-1">
+                          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 16 }} className="flex items-center gap-1">
                             <MapPin size={12} style={{ color: C.sea }} /> {r.location || "Unknown"}
                           </div>
-                          <div style={{ fontFamily: MONO, fontSize: 10, color: C.inkFaint }}>
+                          <div style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint }}>
                             {r.date}{r.time ? " · " + r.time : ""}{r.source ? " · " + r.source : ""}
                           </div>
                         </div>
@@ -788,19 +802,19 @@ export default function TritonDiningDashboard() {
                       </div>
                       <div style={{ borderTop: `1px dashed ${C.line}`, margin: "8px 0" }} />
                       {(r.items || []).slice(0, 5).map((it, i) => (
-                        <div key={i} className="flex justify-between" style={{ fontFamily: MONO, fontSize: 11, color: C.navySoft }}>
+                        <div key={i} className="flex justify-between" style={{ fontFamily: MONO, fontSize: 13, color: C.navySoft }}>
                           <span className="truncate">{(it.qty > 1 ? it.qty + "× " : "") + it.name}</span>
                           <span>{fmt$(it.price)}</span>
                         </div>
                       ))}
                       {(r.items || []).length > 5 && (
-                        <div style={{ fontFamily: MONO, fontSize: 10, color: C.inkFaint }}>+{r.items.length - 5} more</div>
+                        <div style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint }}>+{r.items.length - 5} more</div>
                       )}
-                      <div className="flex justify-between mt-2" style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600 }}>
+                      <div className="flex justify-between mt-2" style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600 }}>
                         <span>TOTAL</span><span>{fmt$(r.total)}</span>
                       </div>
                       {r.receiptNumber && (
-                        <div style={{ fontFamily: MONO, fontSize: 9, color: C.inkFaint, marginTop: 4 }}>#{r.receiptNumber}</div>
+                        <div style={{ fontFamily: MONO, fontSize: 11, color: C.inkFaint, marginTop: 4 }}>#{r.receiptNumber}</div>
                       )}
                     </div>
                     <ZigzagEdge />
@@ -812,9 +826,9 @@ export default function TritonDiningDashboard() {
         )}
       </main>
 
-      <footer className="max-w-5xl mx-auto px-4 pb-6">
-        <p style={{ fontFamily: MONO, fontSize: 10, color: C.inkFaint }}>
-          Data stays in this artifact's private storage — nothing is shared. AI parsing can misread a receipt; spot-check totals against the app.
+      <footer className="w-4/5 mx-auto pb-6">
+        <p style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint, textAlign: "center" }}>
+          Data stays in this browser's local storage — nothing is uploaded. AI parsing can misread a receipt; spot-check totals against the app.
         </p>
       </footer>
     </div>
