@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
+  BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, Cell,
 } from "recharts";
 import {
@@ -41,6 +41,55 @@ function receiptKey(r) {
   return r.receiptNumber
     ? "rn:" + String(r.receiptNumber).trim()
     : ["k", r.date, r.time || "", r.location || "", r.total].join("|");
+}
+
+// Loose identity for cross-source matching. A card swipe and the Triton2Go
+// receipt for the SAME purchase share a date and a total, but nothing else —
+// the swipe has no receipt number and a different location spelling.
+function looseKey(r) {
+  return `${r.date}|${Number(r.total).toFixed(2)}`;
+}
+
+// eAccounts writes locations as "<org> <venue> <code> <concept> <channel>", e.g.
+// "HDH Oceanview Terrace OVT Spice Mobile Ordering" or "RRSS Goodys Marketplace
+// Goodys Marketplace JWO". Match the venue by substring so those collapse to the
+// same hall as app receipts. ORDER MATTERS: "North Torrey Pines" also contains
+// "Pines", and "Sixth Market NTP" also contains "NTP".
+const VENUE_PATTERNS = [
+  [/goody'?s/i, "Goody's Marketplace"],
+  [/sixth market/i, "Sixth Market"],
+  [/seventh market/i, "Seventh Market"],
+  [/north torrey pines|ntp rooftop/i, "NTP Rooftop"],
+  [/ocean\s?view/i, "OceanView Terrace"],
+  [/64\s*-?\s*degrees|64\s*-?\s*burger/i, "64 Degrees"],
+  [/canyon vista/i, "Canyon Vista"],
+  [/foodworx/i, "Foodworx"],
+  [/ventanas/i, "Cafe Ventanas"],
+  [/club med/i, "Club Med"],
+  [/bombay/i, "Bombay Coast"],
+  [/tapioca/i, "Tapioca Express"],
+  [/blue pepper/i, "Blue Pepper"],
+  [/panda express/i, "Panda Express"],
+  [/\broots\b/i, "Roots"],
+  [/\bpines\b/i, "Pines"],
+];
+
+// These ride the same card accounts but aren't food — they'd inflate "total spent".
+const NON_DINING = /laundry|kiosoft|bookstore|print|parking/i;
+
+// Canonical hall name, or null for a non-dining charge (the caller drops those).
+function normalizeLocation(raw) {
+  const clean = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "Unknown";
+  if (NON_DINING.test(clean)) return null;
+  for (const [re, name] of VENUE_PATTERNS) if (re.test(clean)) return name;
+  // Unrecognized venue: at least drop the org prefix and the ordering-channel
+  // suffix so it charts readably instead of as the raw terminal string.
+  const tidied = clean
+    .replace(/^(HDH|RRSS|UCSD)\s+/i, "")
+    .replace(/\s+(JWO|Mobile Ordering|Mobile Order|Mobile)$/i, "")
+    .trim();
+  return tidied || clean;
 }
 
 function parseDateTime(r) {
@@ -125,6 +174,58 @@ async function syncGmailReceipts(existingKeys) {
   throw new Error("Couldn't find structured receipt data in the Gmail response.");
 }
 
+/* ---------- eAccounts (Transact) card-swipe parser — deterministic, no API tokens ---------- */
+// Returns the first non-empty value among candidate field names (portals vary).
+function pickField(obj, keys) {
+  for (const k of keys) {
+    if (obj[k] != null && obj[k] !== "") return obj[k];
+  }
+  return null;
+}
+
+// Maps raw eAccounts transaction rows -> the app's Receipt shape. Card swipes
+// have no line items, so `items` is always empty.
+function parseTransactTransactions(rows) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const out = [];
+  for (const row of rows || []) {
+    if (!row || typeof row !== "object") continue;
+
+    // amount may be a number (-14.25) or a string ("(14.25) USD")
+    const rawAmt = pickField(row, ["amount", "transactionAmount", "value"]);
+    const amt =
+      typeof rawAmt === "number"
+        ? rawAmt
+        : parseFloat(String(rawAmt).replace(/[^0-9.\-]/g, ""));
+    if (!isFinite(amt)) continue;
+
+    // Purchases leave the account, so they're negative here; positive rows are
+    // deposits/credits and get skipped (this is a spending log).
+    if (amt >= 0) continue;
+
+    // datetime -> date (YYYY-MM-DD) + time (HH:MM)
+    const dtRaw = pickField(row, ["datetime", "dateTime", "transactionDate", "date", "postedDate"]);
+    const d = dtRaw ? new Date(dtRaw) : null;
+    if (!d || isNaN(d.getTime())) continue;
+
+    // Laundry and other non-food charges share these accounts — drop them.
+    const where = normalizeLocation(pickField(row, ["location", "locationName", "activity", "merchant", "terminalName"]));
+    if (where === null) continue;
+
+    out.push({
+      source: "card",
+      location: where,
+      date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+      time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      total: Math.abs(amt),
+      receiptNumber: pickField(row, ["transactionId", "id", "referenceNumber"]),
+      paymentMethod: pickField(row, ["account", "accountName", "tenderName"]),
+      items: [],
+    });
+  }
+  return out;
+}
+
 /* ---------- small components ---------- */
 function ZigzagEdge({ color = C.paper }) {
   return (
@@ -191,6 +292,29 @@ function ChartTip({ active, payload, label, money }) {
   );
 }
 
+// X-axis tick for the monthly timeline. Now that empty months are filled in, a
+// full history is ~2 years of bars and a label under every one would collide.
+// Instead: label quarters only once the axis gets long, and print the year on a
+// second line at January (and at the first tick) so the year is never repeated
+// across twelve labels. No rotated text — angled labels are slower to read.
+function MonthTick({ x, y, payload, months, quarterly }) {
+  const m = months.find((mo) => mo.label === payload.value);
+  if (!m) return null;
+  const monthNum = Number(m.key.slice(5));
+  const isFirst = months[0] === m;
+  if (quarterly && !isFirst && monthNum % 3 !== 1) return null;
+
+  const style = { fontFamily: MONO, fontSize: 12, fill: C.inkFaint, textAnchor: "middle" };
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text {...style} dy={12}>{m.label.slice(0, 3)}</text>
+      {(monthNum === 1 || isFirst) && (
+        <text {...style} dy={26} opacity={0.75}>{"’" + m.key.slice(2, 4)}</text>
+      )}
+    </g>
+  );
+}
+
 /* ---------- main app ---------- */
 export default function TritonDiningDashboard() {
   const [receipts, setReceipts] = useState([]);
@@ -205,6 +329,8 @@ export default function TritonDiningDashboard() {
   const exportRef = useRef(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [eaOpen, setEaOpen] = useState(false);
+  const [eaText, setEaText] = useState("");
 
   /* load persisted data */
   useEffect(() => {
@@ -228,17 +354,54 @@ export default function TritonDiningDashboard() {
   const addReceipts = useCallback((incoming) => {
     setReceipts((current) => {
       const keys = new Set(current.map(receiptKey));
+      // Loose matching runs ACROSS sources only. Two card swipes that share a day
+      // and a total are usually two real purchases (the same $9.80 lunch twice),
+      // and receiptKey already separates them by time — so only itemized receipts
+      // go in here, and only card swipes get tested against it.
+      const richLoose = new Set(current.filter((r) => r.source !== "card").map(looseKey));
+      const cardAt = new Map();
+      current.forEach((r, i) => { if (r.source === "card") cardAt.set(looseKey(r), i); });
+
+      const superseded = new Set(); // indexes of card swipes replaced this round
       const fresh = [];
+      let matched = 0;              // same purchase, already covered by another source
+
       for (const r of incoming) {
         if (!r || !r.date || r.total == null) continue;
         const k = receiptKey(r);
         if (keys.has(k)) continue;
+        const lk = looseKey(r);
+
+        if (r.source === "card") {
+          // An itemized receipt for this purchase already exists — the swipe would
+          // double-count it, and it carries no line items anyway.
+          if (richLoose.has(lk)) { matched++; continue; }
+        } else {
+          // Richer receipt for a purchase we only had as a bare swipe: drop the swipe.
+          richLoose.add(lk);
+          const i = cardAt.get(lk);
+          if (i !== undefined) { superseded.add(i); cardAt.delete(lk); matched++; }
+        }
+
         keys.add(k);
         fresh.push({ ...r, id: k, items: Array.isArray(r.items) ? r.items : [] });
       }
-      const next = [...current, ...fresh].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      // Same collision, but within this one batch (a swipe added just above, then
+      // an app receipt for it): the itemized receipt wins.
+      const batchRich = new Set(fresh.filter((r) => r.source !== "card").map(looseKey));
+      const keptFresh = fresh.filter((r) => !(r.source === "card" && batchRich.has(looseKey(r))));
+      matched += fresh.length - keptFresh.length;
+
+      const kept = current.filter((_, i) => !superseded.has(i));
+      const next = [...kept, ...keptFresh].sort((a, b) => (a.date < b.date ? 1 : -1));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setLog((l) => [{ ok: true, msg: `Added ${fresh.length} new receipt${fresh.length === 1 ? "" : "s"} (${incoming.length - fresh.length} duplicate/skipped).` }, ...l]);
+      setLog((l) => [{
+        ok: true,
+        msg: `Added ${keptFresh.length} new receipt${keptFresh.length === 1 ? "" : "s"}` +
+          ` (${incoming.length - keptFresh.length} duplicate/skipped` +
+          `${matched ? `, ${matched} already covered by another source` : ""}).`,
+      }, ...l]);
       return next;
     });
   }, []);
@@ -285,9 +448,40 @@ export default function TritonDiningDashboard() {
     }
   }
 
-  async function removeReceipt(id) {
-    const next = receipts.filter((r) => r.id !== id);
-    await persist(next);
+  // Deterministic eAccounts import (no API tokens). Accepts a raw JSON array of
+  // transactions (or {transactions|data|rows|receipts:[...]}).
+  function importEaccounts(rawText) {
+    try {
+      const parsed = JSON.parse(stripFences(rawText));
+      const rows = Array.isArray(parsed)
+        ? parsed
+        : parsed.transactions || parsed.data || parsed.rows || parsed.receipts;
+      if (!Array.isArray(rows)) throw new Error("Expected a JSON array of transactions");
+      const found = parseTransactTransactions(rows);
+      if (!found.length) throw new Error("No purchases found (deposits/credits are skipped).");
+      addReceipts(found);
+      setEaText("");
+      setEaOpen(false);
+    } catch (e) {
+      setLog((l) => [{ ok: false, msg: "eAccounts: " + e.message }, ...l]);
+    }
+  }
+
+  async function importEaccountsFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) throw new Error("Clipboard is empty.");
+      importEaccounts(text);
+    } catch (e) {
+      setLog((l) => [{ ok: false, msg: "eAccounts clipboard: " + e.message }, ...l]);
+    }
+  }
+
+  // Delete by position, not by id. Older saved receipts can be missing an `id`
+  // or share one, and filtering on it would drop every match — or, when the id is
+  // undefined, every receipt that also lacks one — instead of the card clicked.
+  async function removeReceipt(index) {
+    await persist(receipts.filter((_, i) => i !== index));
   }
 
   async function clearAll() {
@@ -413,7 +607,22 @@ export default function TritonDiningDashboard() {
     }
 
     const locations = Object.values(byLocation).sort((a, b) => b.visits - a.visits);
-    const months = Object.values(byMonth).sort((a, b) => (a.key < b.key ? -1 : 1));
+
+    // Walk every month from the first to the last, inserting empty ones. Without
+    // this, a summer with no orders vanishes from the axis and the chart implies
+    // steady spending across a gap you were never on campus for.
+    const monthKeys = Object.keys(byMonth).sort();
+    const months = [];
+    if (monthKeys.length) {
+      const first = monthKeys[0].split("-").map(Number);
+      const last = monthKeys[monthKeys.length - 1].split("-").map(Number);
+      let y = first[0], m = first[1];
+      while (y < last[0] || (y === last[0] && m <= last[1])) {
+        const mk = y + "-" + String(m).padStart(2, "0");
+        months.push(byMonth[mk] || { key: mk, label: monthLabel(new Date(y, m - 1, 1)), spend: 0, orders: 0 });
+        if (m === 12) { m = 1; y++; } else { m++; }
+      }
+    }
     const topItems = Object.keys(itemCounts)
       .map((name) => ({ name, count: itemCounts[name], spend: itemSpend[name] }))
       .sort((a, b) => b.count - a.count)
@@ -595,13 +804,20 @@ export default function TritonDiningDashboard() {
                 {/* spend over time */}
                 <Panel title="Spend by month">
                   <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart data={stats.months} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+                    <BarChart data={stats.months} margin={{ top: 4, right: 4, left: -18, bottom: 14 }} barCategoryGap={2}>
                       <CartesianGrid stroke={C.line} strokeDasharray="2 4" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontFamily: MONO, fontSize: 12, fill: C.inkFaint }} axisLine={false} tickLine={false} />
+                      <XAxis
+                        dataKey="label"
+                        interval={0}
+                        height={38}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={<MonthTick months={stats.months} quarterly={stats.months.length > 8} />}
+                      />
                       <YAxis tick={{ fontFamily: MONO, fontSize: 12, fill: C.inkFaint }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<ChartTip money />} />
-                      <Area type="monotone" dataKey="spend" name="Spend" stroke={C.sea} strokeWidth={2} fill={C.sea} fillOpacity={0.15} />
-                    </AreaChart>
+                      <Tooltip cursor={{ fill: C.navy, fillOpacity: 0.05 }} content={<ChartTip money />} />
+                      <Bar dataKey="spend" name="Spend" fill={C.sea} radius={[4, 4, 0, 0]} />
+                    </BarChart>
                   </ResponsiveContainer>
                 </Panel>
 
@@ -747,6 +963,46 @@ export default function TritonDiningDashboard() {
               )}
             </Panel>
 
+            <Panel
+              title="Card swipes (eAccounts)"
+              right={
+                <button onClick={() => setEaOpen(!eaOpen)} style={{ background: "none", border: "none", cursor: "pointer", color: C.sea }}>
+                  {eaOpen ? <X size={14} /> : <ClipboardPaste size={14} />}
+                </button>
+              }
+            >
+              <p style={{ fontSize: 15, color: C.navySoft, marginBottom: 12 }}>
+                Import card-swipe history from Transact eAccounts — no API tokens, no line items. Run the “Grab eAccounts” bookmarklet (setup in <code style={{ fontFamily: MONO, fontSize: 13 }}>scripts/eaccounts-bookmarklet.js</code>) on your Account Transactions page, then:
+              </p>
+              <button
+                onClick={importEaccountsFromClipboard}
+                disabled={!!busy}
+                className="w-full py-3 flex items-center justify-center gap-2 mb-2"
+                style={{ background: C.navy, color: C.paper, fontFamily: MONO, fontSize: 14, fontWeight: 600, border: "none", borderRadius: 3, cursor: busy ? "wait" : "pointer", letterSpacing: "0.08em", opacity: busy ? 0.6 : 1 }}
+              >
+                <ClipboardPaste size={14} /> IMPORT FROM CLIPBOARD
+              </button>
+              {eaOpen && (
+                <>
+                  <textarea
+                    value={eaText}
+                    onChange={(e) => setEaText(e.target.value)}
+                    rows={6}
+                    className="w-full p-2 mb-2"
+                    style={{ fontFamily: MONO, fontSize: 13, border: `1px solid ${C.line}`, borderRadius: 3, resize: "vertical" }}
+                    placeholder='[{"datetime":"3/16/2026 9:15 PM","location":"HDH 64 Degrees 64-Burger Lounge","amount":-10.75}]'
+                  />
+                  <button
+                    onClick={() => importEaccounts(eaText)}
+                    className="px-4 py-2"
+                    style={{ background: C.sea, color: "#FFF", fontFamily: MONO, fontSize: 14, border: "none", borderRadius: 3, cursor: "pointer" }}
+                  >
+                    Import transactions
+                  </button>
+                </>
+              )}
+            </Panel>
+
             {log.length > 0 && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <Panel title="Import log" right={
@@ -784,8 +1040,10 @@ export default function TritonDiningDashboard() {
                 </button>
               </div>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))" }}>
-                {receipts.map((r) => (
-                  <div key={r.id}>
+                {receipts.map((r, i) => (
+                  // Position is part of the key: duplicate keys make React reuse the
+                  // wrong DOM nodes, so a deleted card can appear to stay on screen.
+                  <div key={(r.id || "r") + "@" + i}>
                     <div style={{ background: C.paper, boxShadow: "0 2px 8px rgba(22,36,61,0.10)", padding: "14px 14px 8px" }}>
                       <div className="flex justify-between items-start gap-2">
                         <div>
@@ -796,7 +1054,7 @@ export default function TritonDiningDashboard() {
                             {r.date}{r.time ? " · " + r.time : ""}{r.source ? " · " + r.source : ""}
                           </div>
                         </div>
-                        <button onClick={() => removeReceipt(r.id)} aria-label="Delete receipt" style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint }}>
+                        <button onClick={() => removeReceipt(i)} aria-label="Delete receipt" style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint }}>
                           <Trash2 size={13} />
                         </button>
                       </div>
