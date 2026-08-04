@@ -59,7 +59,10 @@ const VENUE_PATTERNS = [
   [/goody'?s/i, "Goody's Marketplace"],
   [/sixth market/i, "Sixth Market"],
   [/seventh market/i, "Seventh Market"],
-  [/north torrey pines|ntp rooftop/i, "NTP Rooftop"],
+  // Rooftop and Wolftown are vendors inside the Sixth dining hall at North Torrey
+  // Pines, not venues of their own — the hall is what belongs on the location
+  // axis, and parseConcept picks the counter back out.
+  [/north torrey pines|\brooftop\b|\bwolftown\b/i, "Sixth"],
   [/ocean\s?view/i, "OceanView Terrace"],
   [/64\s*-?\s*degrees|64\s*-?\s*burger/i, "64 Degrees"],
   [/canyon vista/i, "Canyon Vista"],
@@ -77,19 +80,74 @@ const VENUE_PATTERNS = [
 // These ride the same card accounts but aren't food — they'd inflate "total spent".
 const NON_DINING = /laundry|kiosoft|bookstore|print|parking/i;
 
+// Building codes eAccounts inserts between the venue and the counter, and the
+// org/channel padding around them.
+const BUILDING_CODES = ["ovt", "ntp", "ntpr", "cv", "pc", "rimac"];
+const TERMINAL_NOISE = new Set(["hdh", "rrss", "ucsd", "jwo", "mobile", "order", "ordering"]);
+// eAccounts abbreviates some counters down to initials — expanded per word.
+const CONCEPT_ALIASES = { wt: "Wolftown" };
+// Counters whose terminal name is shorter than what the venue is actually called.
+// Applied to the assembled concept, keyed lowercase.
+const CONCEPT_RENAMES = {
+  "earls": "Earls Coffee House",
+  "burger lounge": "64 Triton Grill",
+};
+const normWords = (s) =>
+  String(s || "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+// eAccounts terminal strings are "<org> <venue> <CODE> <counter> <channel>", e.g.
+// "HDH Oceanview Terrace OVT Scholars Pizza Mobile". Whatever survives after the
+// venue and the padding is the counter you ordered from — not line items, but the
+// closest thing the portal records about WHAT you bought. Null when the string
+// only restates the hall ("RRSS Goodys Marketplace Goodys Marketplace JWO").
+function parseConcept(raw, hall) {
+  let text = normWords(raw);
+  if (!text) return null;
+
+  // Everything after the last building code, when one is present.
+  for (const code of BUILDING_CODES) {
+    const re = new RegExp(`(?:^| )${code}(?= |$)`, "g");
+    let end = -1, m;
+    while ((m = re.exec(text))) end = m.index + m[0].length;
+    if (end > -1) { text = text.slice(end); break; }
+  }
+
+  const hallWords = new Set(normWords(hall).split(" ").filter(Boolean));
+  const words = text.split(" ").filter(
+    (w) => w && !TERMINAL_NOISE.has(w) && !BUILDING_CODES.includes(w) && !/^\d+$/.test(w) && !hallWords.has(w)
+  );
+  const uniq = [...new Set(words)];
+  if (!uniq.length) return null;
+  const label = uniq.map((w) => CONCEPT_ALIASES[w] || w[0].toUpperCase() + w.slice(1)).join(" ");
+  return CONCEPT_RENAMES[label.toLowerCase()] || label;
+}
+
+// eAccounts usually names a terminal twice ("Sunshine Market Sunshine Market JWO").
+// Drop any block of words immediately repeated after itself, longest run first.
+function collapseRepeats(words) {
+  for (let n = Math.floor(words.length / 2); n >= 1; n--) {
+    for (let i = 0; i + 2 * n <= words.length; i++) {
+      const a = words.slice(i, i + n).join(" ").toLowerCase();
+      const b = words.slice(i + n, i + 2 * n).join(" ").toLowerCase();
+      if (a === b) return collapseRepeats([...words.slice(0, i + n), ...words.slice(i + 2 * n)]);
+    }
+  }
+  return words;
+}
+
 // Canonical hall name, or null for a non-dining charge (the caller drops those).
 function normalizeLocation(raw) {
   const clean = String(raw || "").replace(/\s+/g, " ").trim();
   if (!clean) return "Unknown";
   if (NON_DINING.test(clean)) return null;
   for (const [re, name] of VENUE_PATTERNS) if (re.test(clean)) return name;
-  // Unrecognized venue: at least drop the org prefix and the ordering-channel
-  // suffix so it charts readably instead of as the raw terminal string.
+  // Unrecognized venue: drop the org prefix and the ordering-channel suffix, then
+  // de-duplicate, so it charts readably instead of as the raw terminal string.
   const tidied = clean
     .replace(/^(HDH|RRSS|UCSD)\s+/i, "")
     .replace(/\s+(JWO|Mobile Ordering|Mobile Order|Mobile)$/i, "")
     .trim();
-  return tidied || clean;
+  return collapseRepeats(tidied.split(" ").filter(Boolean)).join(" ") || clean;
 }
 
 function parseDateTime(r) {
@@ -209,12 +267,17 @@ function parseTransactTransactions(rows) {
     if (!d || isNaN(d.getTime())) continue;
 
     // Laundry and other non-food charges share these accounts — drop them.
-    const where = normalizeLocation(pickField(row, ["location", "locationName", "activity", "merchant", "terminalName"]));
+    const rawWhere = pickField(row, ["location", "locationName", "activity", "merchant", "terminalName"]);
+    const where = normalizeLocation(rawWhere);
     if (where === null) continue;
 
     out.push({
       source: "card",
       location: where,
+      // Keep the terminal string so concepts can be re-derived later without a
+      // fresh import if the parsing rules change.
+      locationRaw: rawWhere || null,
+      concept: parseConcept(rawWhere, where),
       date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
       time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
       total: Math.abs(amt),
@@ -222,6 +285,21 @@ function parseTransactTransactions(rows) {
       paymentMethod: pickField(row, ["account", "accountName", "tenderName"]),
       items: [],
     });
+  }
+  return out;
+}
+
+// Card swipes keep the terminal string they came from, so when the venue rules
+// change the hall and counter can be re-derived on load instead of forcing a
+// re-import. Receipts from other sources have no locationRaw and pass through.
+function remapStored(list) {
+  const out = [];
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || !r.locationRaw) { if (r) out.push(r); continue; }
+    const where = normalizeLocation(r.locationRaw);
+    if (where === null) continue; // reclassified as non-dining
+    const next = { ...r, location: where, concept: parseConcept(r.locationRaw, where) };
+    out.push({ ...next, id: receiptKey(next) });
   }
   return out;
 }
@@ -331,18 +409,38 @@ export default function TritonDiningDashboard() {
   const [copied, setCopied] = useState(false);
   const [eaOpen, setEaOpen] = useState(false);
   const [eaText, setEaText] = useState("");
+  // Selection is by position in `receipts`, so it must not outlive a change to
+  // that list — stale indexes would delete the wrong rows.
+  const [selected, setSelected] = useState(() => new Set());
+
+  // Mirror of `receipts` that updates synchronously. Importers need to read the
+  // current list without passing a function to setReceipts — React invokes those
+  // updaters twice under StrictMode, which would double every side effect inside
+  // them. It also lets back-to-back imports (handleFiles loops over screenshots)
+  // see each other's results before React has re-rendered.
+  const receiptsRef = useRef(receipts);
+  useEffect(() => { receiptsRef.current = receipts; }, [receipts]);
+
+  // Any import or delete reshuffles positions, so drop the selection with it.
+  useEffect(() => { setSelected(new Set()); }, [receipts]);
 
   /* load persisted data */
   useEffect(() => {
     // localStorage is synchronous, so no async/await needed here.
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setReceipts(JSON.parse(raw));
+      if (raw) {
+        const stored = remapStored(JSON.parse(raw));
+        receiptsRef.current = stored;
+        setReceipts(stored);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      }
     } catch { /* first run — nothing stored yet */ }
     setLoaded(true);
   }, []);
 
   const persist = useCallback(async (next) => {
+    receiptsRef.current = next;
     setReceipts(next);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -352,7 +450,8 @@ export default function TritonDiningDashboard() {
   }, []);
 
   const addReceipts = useCallback((incoming) => {
-    setReceipts((current) => {
+    {
+      const current = receiptsRef.current;
       const keys = new Set(current.map(receiptKey));
       // Loose matching runs ACROSS sources only. Two card swipes that share a day
       // and a total are usually two real purchases (the same $9.80 lunch twice),
@@ -364,23 +463,28 @@ export default function TritonDiningDashboard() {
 
       const superseded = new Set(); // indexes of card swipes replaced this round
       const fresh = [];
-      let matched = 0;              // same purchase, already covered by another source
+      // Every incoming row lands in exactly one of these, so they sum to
+      // incoming.length alongside the added count. `replaced` is separate: it
+      // counts existing swipes removed, not incoming rows rejected.
+      let already = 0;  // identical receipt already stored
+      let covered = 0;  // card swipe for a purchase an itemized receipt already has
+      let unusable = 0; // no date or no total — nothing we can chart
 
       for (const r of incoming) {
-        if (!r || !r.date || r.total == null) continue;
+        if (!r || !r.date || r.total == null) { unusable++; continue; }
         const k = receiptKey(r);
-        if (keys.has(k)) continue;
+        if (keys.has(k)) { already++; continue; }
         const lk = looseKey(r);
 
         if (r.source === "card") {
           // An itemized receipt for this purchase already exists — the swipe would
           // double-count it, and it carries no line items anyway.
-          if (richLoose.has(lk)) { matched++; continue; }
+          if (richLoose.has(lk)) { covered++; continue; }
         } else {
           // Richer receipt for a purchase we only had as a bare swipe: drop the swipe.
           richLoose.add(lk);
           const i = cardAt.get(lk);
-          if (i !== undefined) { superseded.add(i); cardAt.delete(lk); matched++; }
+          if (i !== undefined) { superseded.add(i); cardAt.delete(lk); }
         }
 
         keys.add(k);
@@ -391,19 +495,34 @@ export default function TritonDiningDashboard() {
       // an app receipt for it): the itemized receipt wins.
       const batchRich = new Set(fresh.filter((r) => r.source !== "card").map(looseKey));
       const keptFresh = fresh.filter((r) => !(r.source === "card" && batchRich.has(looseKey(r))));
-      matched += fresh.length - keptFresh.length;
+      covered += fresh.length - keptFresh.length;
 
       const kept = current.filter((_, i) => !superseded.has(i));
       const next = [...kept, ...keptFresh].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      // Side effects live out here, run exactly once per import.
+      receiptsRef.current = next;
+      setReceipts(next);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+
+      // Name only what actually happened — a run with nothing to report just says
+      // how many were added.
+      const added = keptFresh.length;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+      const notes = [];
+      if (already) notes.push(`${already} already imported`);
+      if (covered) notes.push(`${plural(covered, "card swipe")} already covered by a full receipt`);
+      if (superseded.size) notes.push(
+        superseded.size === 1
+          ? "1 card swipe upgraded to a full receipt"
+          : `${superseded.size} card swipes upgraded to full receipts`
+      );
+      if (unusable) notes.push(`${plural(unusable, "row")} skipped (no date or total)`);
       setLog((l) => [{
         ok: true,
-        msg: `Added ${keptFresh.length} new receipt${keptFresh.length === 1 ? "" : "s"}` +
-          ` (${incoming.length - keptFresh.length} duplicate/skipped` +
-          `${matched ? `, ${matched} already covered by another source` : ""}).`,
+        msg: `Added ${plural(added, "receipt")}` + (notes.length ? ` — ${notes.join(", ")}.` : "."),
       }, ...l]);
-      return next;
-    });
+    }
   }, []);
 
   /* import handlers */
@@ -481,7 +600,34 @@ export default function TritonDiningDashboard() {
   // or share one, and filtering on it would drop every match — or, when the id is
   // undefined, every receipt that also lacks one — instead of the card clicked.
   async function removeReceipt(index) {
+    const r = receipts[index];
+    const what = r ? `${r.location || "Unknown"} · ${r.date} · ${fmt$(r.total)}` : "this receipt";
+    if (!window.confirm(`Delete this receipt?\n\n${what}\n\nThis can't be undone.`)) return;
     await persist(receipts.filter((_, i) => i !== index));
+  }
+
+  /* ---- bulk selection ---- */
+  const toggleSelect = (i) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+
+  const allSelected = receipts.length > 0 && selected.size === receipts.length;
+  const toggleSelectAll = () =>
+    setSelected(allSelected ? new Set() : new Set(receipts.map((_, i) => i)));
+
+  // Quick-select every receipt from one source — the fast way to clear out card
+  // swipes for a re-import without touching itemized screenshot receipts.
+  const selectBySource = (src) =>
+    setSelected(new Set(receipts.reduce((acc, r, i) => (r.source === src ? [...acc, i] : acc), [])));
+
+  async function deleteSelected() {
+    if (!selected.size) return;
+    const n = selected.size;
+    if (!window.confirm(`Delete ${n} receipt${n === 1 ? "" : "s"}?\n\nThis can't be undone.`)) return;
+    await persist(receipts.filter((_, i) => !selected.has(i)));
   }
 
   async function clearAll() {
@@ -566,8 +712,7 @@ export default function TritonDiningDashboard() {
 
     const byLocation = {};
     const byMonth = {};
-    const itemCounts = {};
-    const itemSpend = {};
+    const byConcept = {};
     const heat = {}; // day-slot -> count
     let biggest = null;
 
@@ -576,6 +721,15 @@ export default function TritonDiningDashboard() {
       byLocation[loc] = byLocation[loc] || { location: loc, visits: 0, spend: 0 };
       byLocation[loc].visits += 1;
       byLocation[loc].spend += Number(r.total) || 0;
+
+      // Counter within a hall ("Scholars Pizza" at OceanView). Only card swipes
+      // carry one, and only where the hall has separate counters at all.
+      if (r.concept) {
+        const c = `${r.concept} · ${loc}`;
+        byConcept[c] = byConcept[c] || { name: r.concept, location: loc, visits: 0, spend: 0 };
+        byConcept[c].visits += 1;
+        byConcept[c].spend += Number(r.total) || 0;
+      }
 
       const d = parseDateTime(r);
       if (d) {
@@ -595,18 +749,11 @@ export default function TritonDiningDashboard() {
         }
       }
 
-      for (const it of r.items || []) {
-        const name = (it.name || "").trim();
-        if (!name) continue;
-        const qty = Number(it.qty) || 1;
-        itemCounts[name] = (itemCounts[name] || 0) + qty;
-        itemSpend[name] = (itemSpend[name] || 0) + (Number(it.price) || 0);
-      }
-
       if (!biggest || (Number(r.total) || 0) > (Number(biggest.total) || 0)) biggest = r;
     }
 
     const locations = Object.values(byLocation).sort((a, b) => b.visits - a.visits);
+    const concepts = Object.values(byConcept).sort((a, b) => b.visits - a.visits).slice(0, 8);
 
     // Walk every month from the first to the last, inserting empty ones. Without
     // this, a summer with no orders vanishes from the axis and the chart implies
@@ -623,13 +770,9 @@ export default function TritonDiningDashboard() {
         if (m === 12) { m = 1; y++; } else { m++; }
       }
     }
-    const topItems = Object.keys(itemCounts)
-      .map((name) => ({ name, count: itemCounts[name], spend: itemSpend[name] }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
     const maxHeat = Math.max(1, ...Object.values(heat));
 
-    return { total, count, avg: count ? total / count : 0, locations, months, topItems, heat, maxHeat, biggest };
+    return { total, count, avg: count ? total / count : 0, locations, concepts, months, heat, maxHeat, biggest };
   }, [filtered]);
 
   const topLoc = stats.locations[0];
@@ -837,24 +980,28 @@ export default function TritonDiningDashboard() {
                   </ResponsiveContainer>
                 </Panel>
 
-                {/* top items — printed like a receipt */}
-                <Panel title="Most ordered items">
-                  {stats.topItems.length === 0 ? (
-                    <p style={{ fontFamily: MONO, fontSize: 14, color: C.inkFaint }}>
-                      No line items yet — screenshots of full receipts will fill this in.
-                    </p>
-                  ) : (
+
+                {/* counters within halls — the closest thing card swipes have to items */}
+                {stats.concepts.length > 0 && (
+                  <Panel title="Where you order">
                     <div style={{ background: C.paper, padding: "12px 14px" }}>
-                      {stats.topItems.map((it, i) => (
-                        <div key={it.name} className="flex justify-between gap-2 py-1" style={{ fontFamily: MONO, fontSize: 14, borderBottom: i < stats.topItems.length - 1 ? `1px dashed ${C.line}` : "none" }}>
-                          <span className="truncate">{it.name}</span>
-                          <span style={{ whiteSpace: "nowrap", color: C.navySoft }}>×{it.count} · {fmt$(it.spend)}</span>
+                      {stats.concepts.map((c, i) => (
+                        <div
+                          key={c.name + c.location}
+                          className="flex justify-between gap-2 py-1"
+                          style={{ fontFamily: MONO, fontSize: 14, borderBottom: i < stats.concepts.length - 1 ? `1px dashed ${C.line}` : "none" }}
+                        >
+                          <span className="truncate">
+                            {c.name}
+                            <span style={{ color: C.inkFaint, fontSize: 12 }}> · {c.location}</span>
+                          </span>
+                          <span style={{ whiteSpace: "nowrap", color: C.navySoft }}>×{c.visits} · {fmt$(c.spend)}</span>
                         </div>
                       ))}
                       <ZigzagEdge color={C.paper} />
                     </div>
-                  )}
-                </Panel>
+                  </Panel>
+                )}
 
                 {/* heatmap — spans the full second row */}
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1030,31 +1177,89 @@ export default function TritonDiningDashboard() {
             </p>
           ) : (
             <>
-              <div className="flex justify-between items-center mb-3">
-                <span style={{ fontFamily: MONO, fontSize: 13, color: C.inkFaint }}>{receipts.length} receipts · newest first</span>
-                <button
-                  onClick={() => { if (window.confirm("Delete all stored receipts?")) clearAll(); }}
-                  style={{ background: "none", border: `1px solid ${C.coral}`, color: C.coral, fontFamily: MONO, fontSize: 13, padding: "4px 10px", borderRadius: 3, cursor: "pointer" }}
-                >
-                  Clear all
-                </button>
+              <div className="flex justify-between items-center gap-3 flex-wrap mb-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="flex items-center gap-2" style={{ fontFamily: MONO, fontSize: 13, color: C.navySoft, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      style={{ accentColor: C.sea, width: 15, height: 15, cursor: "pointer" }}
+                    />
+                    {selected.size ? `${selected.size} selected` : `${receipts.length} receipts · newest first`}
+                  </label>
+                  {/* quick-select by source, so a re-import only clears what it needs to */}
+                  {[...new Set(receipts.map((r) => r.source).filter(Boolean))].map((src) => (
+                    <button
+                      key={src}
+                      onClick={() => selectBySource(src)}
+                      style={{ background: "none", border: `1px solid ${C.line}`, color: C.navySoft, fontFamily: MONO, fontSize: 12, padding: "3px 8px", borderRadius: 3, cursor: "pointer" }}
+                    >
+                      select {src}
+                    </button>
+                  ))}
+                  {selected.size > 0 && (
+                    <button
+                      onClick={() => setSelected(new Set())}
+                      style={{ background: "none", border: "none", color: C.inkFaint, fontFamily: MONO, fontSize: 12, cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      clear selection
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {selected.size > 0 && (
+                    <button
+                      onClick={deleteSelected}
+                      style={{ background: C.coral, border: "none", color: "#FFF", fontFamily: MONO, fontSize: 13, padding: "5px 11px", borderRadius: 3, cursor: "pointer" }}
+                    >
+                      Delete {selected.size} selected
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { if (window.confirm(`Delete all ${receipts.length} stored receipts?\n\nThis can't be undone.`)) clearAll(); }}
+                    style={{ background: "none", border: `1px solid ${C.coral}`, color: C.coral, fontFamily: MONO, fontSize: 13, padding: "4px 10px", borderRadius: 3, cursor: "pointer" }}
+                  >
+                    Clear all
+                  </button>
+                </div>
               </div>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))" }}>
                 {receipts.map((r, i) => (
                   // Position is part of the key: duplicate keys make React reuse the
                   // wrong DOM nodes, so a deleted card can appear to stay on screen.
                   <div key={(r.id || "r") + "@" + i}>
-                    <div style={{ background: C.paper, boxShadow: "0 2px 8px rgba(22,36,61,0.10)", padding: "14px 14px 8px" }}>
+                    <div style={{
+                      background: C.paper,
+                      boxShadow: selected.has(i) ? `0 0 0 2px ${C.sea}` : "0 2px 8px rgba(22,36,61,0.10)",
+                      padding: "14px 14px 8px",
+                    }}>
                       <div className="flex justify-between items-start gap-2">
-                        <div>
-                          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 16 }} className="flex items-center gap-1">
-                            <MapPin size={12} style={{ color: C.sea }} /> {r.location || "Unknown"}
-                          </div>
-                          <div style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint }}>
-                            {r.date}{r.time ? " · " + r.time : ""}{r.source ? " · " + r.source : ""}
+                        <div className="flex items-start gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(i)}
+                            onChange={() => toggleSelect(i)}
+                            aria-label={`Select receipt from ${r.location || "Unknown"} on ${r.date}`}
+                            style={{ accentColor: C.sea, width: 15, height: 15, marginTop: 3, cursor: "pointer", flexShrink: 0 }}
+                          />
+                          <div className="min-w-0">
+                            <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 16 }} className="flex items-center gap-1">
+                              <MapPin size={12} style={{ color: C.sea, flexShrink: 0 }} />
+                              <span className="truncate">{r.location || "Unknown"}</span>
+                            </div>
+                            {/* the counter within the hall, where a receipt would name the vendor */}
+                            {r.concept && (
+                              <div style={{ fontFamily: SANS, fontWeight: 600, fontSize: 13, color: C.sea }} className="truncate">
+                                {r.concept}
+                              </div>
+                            )}
+                            <div style={{ fontFamily: MONO, fontSize: 12, color: C.inkFaint }}>
+                              {r.date}{r.time ? " · " + r.time : ""}{r.source ? " · " + r.source : ""}
+                            </div>
                           </div>
                         </div>
-                        <button onClick={() => removeReceipt(i)} aria-label="Delete receipt" style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint }}>
+                        <button onClick={() => removeReceipt(i)} aria-label="Delete receipt" style={{ background: "none", border: "none", cursor: "pointer", color: C.inkFaint, flexShrink: 0 }}>
                           <Trash2 size={13} />
                         </button>
                       </div>
